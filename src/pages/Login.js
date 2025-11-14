@@ -23,12 +23,12 @@ const Login = () => {
       return;
     }
 
-    // 👉 Guardar token
+
     localStorage.setItem("token", data.token);
 
     console.log("Usuario logueado:", data.user);
 
-    // 👉 Llevar al dashboard
+   
     navigate("/dashboard");
 
   } catch (err) {

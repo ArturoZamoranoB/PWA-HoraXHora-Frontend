@@ -30,8 +30,6 @@ const Register = () => {
       return;
     }
 
-    // Si quieres guardar token desde el registro:
-    // localStorage.setItem("token", data.token);
 
     console.log("Usuario registrado:", data.user);
 
