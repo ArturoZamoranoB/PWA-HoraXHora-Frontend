@@ -46,7 +46,7 @@ const Dashboard = () => {
     const fetchSolicitudes = async () => {
       try {
         const res = await fetch(
-          "http://localhost:4000/api/solicitudes/aceptadas",
+          "https://pwa-horaxhora-backend.onrender.com/api/solicitudes/aceptadas",
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -80,6 +80,13 @@ const Dashboard = () => {
     navigate("/actividades");
   };
 
+  const goToPerfil = () => {
+    navigate("/perfil");
+  };
+
+    const goToCrear = () => {
+    navigate("/crear");
+  };
   return (
     <div style={styles.wrapper}>
       {!online && (
@@ -102,6 +109,12 @@ const Dashboard = () => {
             <button style={styles.secondaryBtn} onClick={goToActividades}>
               Ver actividades disponibles
             </button>
+             <button style={styles.secondaryBtn} onClick={goToCrear}>
+              Crear Activades
+            </button>
+             <button style={styles.secondaryBtn} onClick={goToPerfil}>
+              Ir a perfil
+             </button>
             <button style={styles.logoutBtn} onClick={logout}>
               Cerrar sesión
             </button>

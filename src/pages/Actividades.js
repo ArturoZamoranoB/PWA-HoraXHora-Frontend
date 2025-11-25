@@ -16,7 +16,7 @@ const Actividades = () => {
     const fetchPendientes = async () => {
       try {
         const res = await fetch(
-          "http://localhost:4000/api/solicitudes/pendientes",
+          "https://pwa-horaxhora-backend.onrender.com/api/solicitudes/pendientes",
           {
             headers: {
               Authorization: `Bearer ${token}`,
