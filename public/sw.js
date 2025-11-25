@@ -19,7 +19,7 @@ const APP_ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(APP_CACHE).then((cache) => {
-      return cache.addAll(APP_ASSETS.map((url) => ORIGIN + url));
+      return cache.addAll(APP_ASSETS);
     })
   );
   self.skipWaiting();
