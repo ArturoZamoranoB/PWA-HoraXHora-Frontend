@@ -54,7 +54,7 @@ const Actividades = () => {
 
     try {
       const res = await fetch(
-        `http://localhost:4000/api/solicitudes/${id}/aceptar`,
+        `https://pwa-horaxhora-backend.onrender.com/api/solicitudes/${id}/aceptar`,
         {
           method: "POST",
           headers: {
