@@ -1,3 +1,4 @@
+// public/sw.js (actualizado)
 const APP_CACHE = "app-shell-v1";
 const API_CACHE = "api-cache-v1";
 
@@ -10,21 +11,37 @@ const APP_ASSETS = [
   "/favicon.ico",
   "/logo192.png",
   "/logo512.png",
-
-  // rutas estáticas típicas de CRA (ajusta si tus nombres difieren)
-  "/static/js/bundle.js",
-  "/static/css/main.css",
+  // NO incluir archivos generados con hash (no poner main.<hash>.js aquí)
 ];
 
+/* -----------------------------
+   Install robusto: cachea uno a uno sin abortar si falla
+   ----------------------------- */
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(APP_CACHE).then((cache) => {
-      return cache.addAll(APP_ASSETS);
-    })
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(APP_CACHE);
+    for (const path of APP_ASSETS) {
+      const url = ORIGIN + path;
+      try {
+        const res = await fetch(url, { cache: "reload" });
+        if (!res || !res.ok) {
+          console.warn("[SW] precache failed (status):", url, res && res.status);
+          continue;
+        }
+        await cache.put(url, res.clone());
+        console.log("[SW] cached:", path);
+      } catch (err) {
+        console.warn("[SW] precache error for", url, err);
+        // seguimos con el siguiente recurso, no abortamos install
+      }
+    }
+  })());
   self.skipWaiting();
 });
 
+/* -----------------------------
+   Activate: limpiar caches viejos
+   ----------------------------- */
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
@@ -41,7 +58,6 @@ self.addEventListener("activate", (event) => {
 
 /* -----------------------------
    IndexedDB helpers dentro del SW
-   (misma DB/Store que usas en el cliente)
    ----------------------------- */
 function openIDB() {
   return new Promise((resolve, reject) => {
@@ -104,215 +120,150 @@ async function syncPendingActivities() {
     const pendings = await getAllPendingInSW();
     for (const p of pendings) {
       try {
-        // Intentamos reenviar al endpoint original guardado en la cola
         const res = await fetch(p.url, {
           method: p.method,
           headers: p.headers || { "Content-Type": "application/json" },
           body: p.body ? JSON.stringify(p.body) : undefined,
         });
 
-        if (res.ok) {
+        if (res && res.ok) {
           await removePendingInSW(p.id);
+          console.log("[SW] pending sent and removed id:", p.id);
         } else {
-          // Si el servidor responde con error (4xx/5xx) se mantiene en cola
-          console.warn("SW: no se pudo subir pendiente (server):", res.status);
+          console.warn("[SW] server rejected pending:", p.id, res && res.status);
         }
       } catch (err) {
-        // Error de red: abortamos para reintentar más tarde
-        console.warn("SW: error de red al enviar pendiente:", err);
+        console.warn("[SW] network error while sending pending, will retry later:", err);
+        // salimos para reintentar más tarde (no eliminamos)
         return;
       }
     }
   } catch (err) {
-    console.error("SW: error al sincronizar pendientes:", err);
+    console.error("[SW] error syncing pendings:", err);
   }
 }
 
 /* -----------------------------
-   Mensajes desde la página (opcional)
-   Permite al cliente enviar info al SW (ej: token)
+   Message handler (opcional)
    ----------------------------- */
 self.addEventListener("message", (event) => {
-  // ejemplo: guardar token u otras señales. Aquí solo logueamos.
   try {
     const data = event.data;
-    console.log("SW recibió mensaje:", data);
-    // Si quieres guardar el token para usarlo en sync,
-    // podrías guardarlo también en IndexedDB aquí.
+    console.log("SW received message:", data);
+    // Puedes guardar token en IDB aquí si quieres usarlo en sync
   } catch (err) {
     console.warn("SW message handler error:", err);
   }
 });
 
 /* -----------------------------
-   Fetch handler: assets, navigate y API
-   - GET app assets: cache-first
-   - navigate: servir index.html cacheado si existe
-   - API (/api/*): network-first con fallback a cache
-   - POST a /api/solicitudes: si falla la red -> almacenar en IndexedDB para reenviar
+   Fetch handler:
+   - navigation: cache-first (index.html) with network fallback
+   - /static/: runtime cache-first (so hashed bundles work automatically)
+   - GET /api/: network-first with cache fallback
+   - POST /api/solicitudes: try network; on failure queue in IDB
    ----------------------------- */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-
-  if (req.method !== "GET" && req.method !== "POST") return; // sólo tratamos GET/POST
-
   const url = new URL(req.url);
 
-  // navegación SPA -> devolver index.html de cache si existe
+  // Only handle GET and POST
+  if (req.method !== "GET" && req.method !== "POST") return;
+
+  // SPA navigation -> serve index.html from cache if exists
   if (req.mode === "navigate") {
-    event.respondWith(
-      (async () => {
-        const cache = await caches.open(APP_CACHE);
-        const cached =
-          (await cache.match(ORIGIN + "/index.html")) ||
-          (await cache.match("/index.html")) ||
-          (await cache.match("index.html"));
-
-        if (cached) {
-          return cached;
-        }
-
-        try {
-          return await fetch(req);
-        } catch (err) {
-          return new Response("Sin conexión y sin app cacheada 😭", {
-            status: 503,
-            headers: { "Content-Type": "text/plain" },
-          });
-        }
-      })()
-    );
+    event.respondWith((async () => {
+      const cache = await caches.open(APP_CACHE);
+      const cached = await cache.match(ORIGIN + "/index.html") || await cache.match("/index.html") || await cache.match("index.html");
+      if (cached) return cached;
+      try {
+        return await fetch(req);
+      } catch (err) {
+        // fallback: return root page cached or a plain response
+        const rootCached = await cache.match(ORIGIN + "/") || await cache.match("/");
+        if (rootCached) return rootCached;
+        return new Response("Sin conexión y sin app cacheada 😭", { status: 503, headers: { "Content-Type": "text/plain" } });
+      }
+    })());
     return;
   }
 
-  const isAppAsset =
-    APP_ASSETS.includes(url.pathname) ||
-    url.pathname.startsWith("/static/");
+  // Runtime cache for static assets (hashed bundles) - cache-first
+  if (req.method === "GET" && url.pathname.startsWith("/static/")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(APP_CACHE);
+      const cached = await cache.match(req);
+      if (cached) return cached;
+      try {
+        const netRes = await fetch(req);
+        if (netRes && netRes.ok) await cache.put(req, netRes.clone());
+        return netRes;
+      } catch (err) {
+        const fallback = await cache.match(req);
+        if (fallback) return fallback;
+        return new Response("Recurso no disponible offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+      }
+    })());
+    return;
+  }
 
-  // assets: cache-first (pero intenta actualizar en segundo plano)
-  if (isAppAsset && req.method === "GET") {
-    event.respondWith(
-      (async () => {
-        const cache = await caches.open(APP_CACHE);
+  // API GET: network-first with cache fallback
+  if (req.method === "GET" && url.pathname.startsWith("/api/")) {
+    event.respondWith((async () => {
+      try {
+        const net = await fetch(req);
+        const cache = await caches.open(API_CACHE);
+        if (net && net.ok) await cache.put(req, net.clone());
+        return net;
+      } catch (err) {
+        const cache = await caches.open(API_CACHE);
         const cached = await cache.match(req);
         if (cached) return cached;
+        return new Response(JSON.stringify({ error: "Sin conexión y sin datos cacheados" }), { status: 503, headers: { "Content-Type": "application/json" } });
+      }
+    })());
+    return;
+  }
 
+  // POST /api/solicitudes: try network, on failure store in IDB and register sync
+  if (req.method === "POST" && url.pathname.startsWith("/api/solicitudes")) {
+    event.respondWith((async () => {
+      let clone = req.clone();
+      let body = null;
+      try { body = await clone.json(); } catch { try { body = await clone.text(); } catch { body = null; } }
+
+      try {
+        const netRes = await fetch(req);
+        return netRes;
+      } catch (err) {
         try {
-          const network = await fetch(req);
-          cache.put(req, network.clone());
-          return network;
-        } catch (err) {
-          return new Response("Recurso no disponible offline", {
-            status: 503,
-            headers: { "Content-Type": "text/plain" },
+          const headers = {};
+          const h = req.headers.get("authorization");
+          if (h) headers.authorization = h;
+          const ct = req.headers.get("content-type");
+          if (ct) headers["content-type"] = ct;
+
+          await addPendingInSW({
+            url: url.pathname,
+            method: "POST",
+            headers,
+            body,
+            createdAt: new Date().toISOString()
           });
-        }
-      })()
-    );
-    return;
-  }
 
-  // API: network-first con fallback a caché (GET)
-  if (url.pathname.startsWith("/api/") && req.method === "GET") {
-    event.respondWith(
-      (async () => {
-        try {
-          const network = await fetch(req);
-          const cache = await caches.open(API_CACHE);
-          cache.put(req, network.clone());
-          return network;
-        } catch (err) {
-          const cache = await caches.open(API_CACHE);
-          const cached = await cache.match(req);
-          if (cached) return cached;
-          return new Response(
-            JSON.stringify({ error: "Sin conexión y sin datos cacheados" }),
-            {
-              status: 503,
-              headers: { "Content-Type": "application/json" },
-            }
-          );
-        }
-      })()
-    );
-    return;
-  }
-
-  // POST a /api/solicitudes -> intentamos enviar, si falla guardamos en IndexedDB
-  if (url.pathname.startsWith("/api/solicitudes") && req.method === "POST") {
-    event.respondWith(
-      (async () => {
-        // clonamos la request para leer el body
-        let reqClone = req.clone();
-        let body = null;
-        try {
-          body = await reqClone.json();
-        } catch (err) {
-          // si no es JSON o no se puede parsear, intenta text
-          try {
-            const text = await reqClone.text();
-            body = text || null;
-          } catch {
-            body = null;
+          if (self.registration && self.registration.sync) {
+            try { await self.registration.sync.register("sync-actividades"); } catch (e) { console.warn("[SW] sync register failed:", e); }
           }
+
+          return new Response(JSON.stringify({ ok: false, message: "Sin conexión. Actividad guardada y será enviada al reconectar." }), { status: 202, headers: { "Content-Type": "application/json" } });
+        } catch (saveErr) {
+          console.error("[SW] error saving pending:", saveErr);
+          return new Response(JSON.stringify({ error: "Error al guardar petición offline" }), { status: 500, headers: { "Content-Type": "application/json" } });
         }
-
-        // intentamos enviar a la red
-        try {
-          const networkRes = await fetch(req);
-          // si ok devolvemos la respuesta de red
-          return networkRes;
-        } catch (err) {
-          // fallo de red -> guardamos en IndexedDB y registramos sync
-          try {
-            // guardamos: url, method, headers (solo autorization y content-type), body y createdAt
-            const headers = {};
-            const h = req.headers.get("authorization");
-            if (h) headers.authorization = h;
-            const contentType = req.headers.get("content-type");
-            if (contentType) headers["content-type"] = contentType;
-
-            await addPendingInSW({
-              url: url.pathname, // se enviará usando /api/solicitudes
-              method: "POST",
-              headers,
-              body,
-              createdAt: new Date().toISOString(),
-            });
-
-            // registramos sync si es posible
-            if (self.registration && self.registration.sync) {
-              try {
-                await self.registration.sync.register("sync-actividades");
-              } catch (err2) {
-                console.warn("SW: no pudo registrar sync:", err2);
-              }
-            }
-
-            // devolvemos respuesta simulada informando que quedó en cola
-            return new Response(
-              JSON.stringify({
-                ok: false,
-                message: "Sin conexión. Actividad guardada en cola y será enviada al reconectar.",
-              }),
-              {
-                status: 202,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          } catch (errSave) {
-            console.error("SW: error al guardar pendiente:", errSave);
-            return new Response(JSON.stringify({ error: "No se pudo guardar la petición" }), {
-              status: 500,
-              headers: { "Content-Type": "application/json" },
-            });
-          }
-        }
-      })()
-    );
-
+      }
+    })());
     return;
   }
 
-  // para otros requests no manejados, dejamos que el navegador haga fetch normalmente
+  // For other requests, let the network handle them
 });
