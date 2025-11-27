@@ -20,7 +20,7 @@ const CrearActividad = () => {
       flushPending();
     };
     window.addEventListener("online", onOnline);
-    // si el SW soporta sync, notificamos al SW usando registerSync en el momento en que guardamos.
+    // limpieza
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
@@ -40,12 +40,20 @@ const CrearActividad = () => {
         if (res.ok) {
           // quitar de la cola
           await removePendingActivity(p.id);
+          console.log("[flushPending] enviado y removido id:", p.id);
         } else {
-          console.warn("No se pudo subir pendiente todavía:", await res.text());
+          // si el servidor responde con client error (4xx) -> eliminar porque no se arreglará con reintentos
+          if (res.status >= 400 && res.status < 500) {
+            console.warn("[flushPending] server rejected pending (client error), removing:", p.id, res.status);
+            await removePendingActivity(p.id);
+          } else {
+            console.warn("[flushPending] server error, dejar en cola para reintentar:", p.id, res.status);
+            // no removemos; reintentará después
+          }
         }
       } catch (err) {
-        console.warn("Error enviando pendiente:", err);
-        // si falla la red, salimos y esperamos al siguiente online / sync event
+        console.warn("[flushPending] error de red al enviar pendiente, saliendo para reintentar luego:", err);
+        // fallo de red: abortar el loop para reintentar cuando volvamos online o con sync
         return;
       }
     }
@@ -67,7 +75,7 @@ const CrearActividad = () => {
         return { ok: true, response: await res.json() };
       } else {
         const errBody = await res.json().catch(() => null);
-        return { ok: false, error: errBody || res.statusText };
+        return { ok: false, error: errBody || res.statusText, status: res.status };
       }
     } catch (err) {
       return { ok: false, error: "network" };
@@ -96,21 +104,26 @@ const CrearActividad = () => {
       createdAt: new Date().toISOString(),
     };
 
-    const id = await addPendingActivity(pending);
+    try {
+      const id = await addPendingActivity(pending);
+      console.log("[handleSubmit] guardado en IDB id:", id);
 
-    // registrar sync si existe serviceWorker + SyncManager
-    if ("serviceWorker" in navigator && "SyncManager" in window) {
-      try {
-        const reg = await navigator.serviceWorker.ready;
-        // etiqueta única, en caso de múltiples invocaciones se puede usar siempre el mismo tag
-        await reg.sync.register("sync-actividades");
-        setMsg("Sin conexión — actividad guardada en cola. Se enviará cuando haya Internet.");
-      } catch (err) {
-        console.warn("No se pudo registrar sync, queda en cola:", err);
-        setMsg("Actividad guardada en cola local (no hay Background Sync).");
+      // registrar sync si existe serviceWorker + SyncManager
+      if ("serviceWorker" in navigator && "SyncManager" in window) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          await reg.sync.register("sync-actividades");
+          setMsg("Sin conexión — actividad guardada en cola. Se enviará cuando haya Internet.");
+        } catch (err) {
+          console.warn("No se pudo registrar sync, queda en cola:", err);
+          setMsg("Actividad guardada en cola local (no hay Background Sync).");
+        }
+      } else {
+        setMsg("Actividad guardada en cola local (se subirá al recuperar conexión).");
       }
-    } else {
-      setMsg("Actividad guardada en cola local (se subirá al recuperar conexión).");
+    } catch (err) {
+      console.error("Error guardando en IDB:", err);
+      setMsg("Error guardando localmente. Intenta de nuevo.");
     }
 
     // limpiar form
@@ -155,43 +168,82 @@ const CrearActividad = () => {
 
         <div style={styles.pendingBox}>
           <h4>Actividades en cola (pendientes)</h4>
-          <PendingList onFlush={() => { /* opcional */ }} />
+          <PendingList onFlush={() => flushPending()} />
         </div>
       </div>
     </div>
   );
 };
 
-// componente pequeño para listar pendientes locales
+// componente robusto para listar pendientes locales
 const PendingList = ({ onFlush }) => {
   const [list, setList] = React.useState([]);
+  const mountedRef = React.useRef(true);
+
+  // helper: seguridad al formatear cada item
+  const safeItem = (it) => {
+    if (!it || typeof it !== "object") return { id: null, payload: {}, createdAt: null };
+    return {
+      id: it.id ?? null,
+      payload: it.payload && typeof it.payload === "object" ? it.payload : {},
+      createdAt: it.createdAt ?? it.createdAtBackup ?? null,
+    };
+  };
 
   React.useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const items = await getAllPendingActivities();
-      if (mounted) setList(items);
-    })();
-    const interval = setInterval(async () => {
-      const items = await getAllPendingActivities();
-      if (mounted) setList(items);
-    }, 3000);
+    mountedRef.current = true;
+    let stopped = false;
+
+    const load = async () => {
+      try {
+        const items = await getAllPendingActivities();
+        if (stopped || !mountedRef.current) return;
+        const normalized = Array.isArray(items) ? items.map(safeItem) : [];
+        setList(normalized);
+      } catch (err) {
+        console.error("Error leyendo pendientes desde IDB:", err);
+        setList([]);
+      }
+    };
+
+    // carga inicial y refresco periódico
+    load();
+    const interval = setInterval(load, 3000);
+
     return () => {
-      mounted = false;
+      stopped = true;
+      mountedRef.current = false;
       clearInterval(interval);
     };
   }, []);
 
-  if (!list.length) return <p style={{ color: "#cbd5f5" }}>No hay pendientes.</p>;
+  if (!Array.isArray(list) || list.length === 0) {
+    return <p style={{ color: "#cbd5f5" }}>No hay pendientes.</p>;
+  }
 
   return (
-    <ul>
-      {list.map((it) => (
-        <li key={it.id} style={{ color: "#cbd5f5", marginBottom: 6 }}>
-          {it.payload.titulo} — {new Date(it.createdAt).toLocaleString()}
-        </li>
-      ))}
-    </ul>
+    <div>
+      <ul>
+        {list.map((it) => {
+          const item = safeItem(it);
+          const title = item.payload?.titulo ?? item.payload?.title ?? "Sin título";
+          let dateStr = "";
+          try {
+            dateStr = item.createdAt ? new Date(item.createdAt).toLocaleString() : "";
+          } catch {
+            dateStr = "";
+          }
+          return (
+            <li key={item.id ?? Math.random()} style={{ color: "#cbd5f5", marginBottom: 6 }}>
+              {title} {dateStr ? " — " + dateStr : ""}
+            </li>
+          );
+        })}
+      </ul>
+      <div style={{ marginTop: 8 }}>
+        <button style={styles.btn} onClick={() => onFlush && onFlush()}>Intentar enviar ahora</button>
+      </div>
+    </div>
   );
 };
 
@@ -208,3 +260,4 @@ const styles = {
 };
 
 export default CrearActividad;
+
