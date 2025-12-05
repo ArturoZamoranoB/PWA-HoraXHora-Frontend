@@ -1,9 +1,8 @@
-// src/pages/CrearActividad.jsx
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { addPendingActivity, getAllPendingActivities, removePendingActivity } from "../utils/idb";
 
-const API_POST = "https://pwa-horaxhora-backend.onrender.com/api/solicitudes"; // endpoint para crear solicitudes (ajusta si tu ruta es otra)
+const API_POST = "https://pwa-horaxhora-backend.onrender.com/api/solicitudes";
 
 const CrearActividad = () => {
   const [titulo, setTitulo] = useState("");
@@ -27,6 +26,8 @@ const CrearActividad = () => {
   const flushPending = async () => {
     const token = localStorage.getItem("token");
     const pendings = await getAllPendingActivities();
+    let syncSuccessCount = 0; // 👈 NUEVO: Contador de envíos exitosos
+
     for (const p of pendings) {
       try {
         const res = await fetch(`${API_POST}`, {
@@ -37,10 +38,12 @@ const CrearActividad = () => {
           },
           body: JSON.stringify(p.payload),
         });
+        
         if (res.ok) {
           // quitar de la cola
           await removePendingActivity(p.id);
           console.log("[flushPending] enviado y removido id:", p.id);
+          syncSuccessCount++; // 👈 Incrementar
         } else {
           // si el servidor responde con client error (4xx) -> eliminar porque no se arreglará con reintentos
           if (res.status >= 400 && res.status < 500) {
@@ -57,7 +60,16 @@ const CrearActividad = () => {
         return;
       }
     }
+    
     setMsg("Pendientes sincronizados.");
+
+    // 👈 NUEVO: Si se sincronizó algo, forzar la navegación/recarga del dashboard
+    if (syncSuccessCount > 0) {
+      console.log(`[flushPending] ${syncSuccessCount} actividades sincronizadas. Navegando para recargar datos.`);
+      // Usamos replace: true para evitar que el usuario vuelva a esta página con el botón Atrás
+      navigate("/dashboard", { replace: true }); 
+      return; 
+    }
   };
 
   const trySendNow = async (payload) => {
@@ -93,8 +105,8 @@ const CrearActividad = () => {
 
     if (result.ok) {
       setMsg("Actividad creada y guardada en el servidor ✔");
-      // opcional: navegar al dashboard
-      setTimeout(() => navigate("/dashboard"), 900);
+      // Navegar al dashboard al terminar con éxito (siempre y cuando Dashboard recargue al montar)
+      setTimeout(() => navigate("/dashboard", { replace: true }), 900);
       return;
     }
 
@@ -168,14 +180,15 @@ const CrearActividad = () => {
 
         <div style={styles.pendingBox}>
           <h4>Actividades en cola (pendientes)</h4>
-          <PendingList onFlush={() => flushPending()} />
+          {/* Se pasa flushPending como prop para el botón de reintento manual */}
+          <PendingList onFlush={flushPending} /> 
         </div>
       </div>
     </div>
   );
 };
 
-// componente robusto para listar pendientes locales
+// Componente para listar pendientes locales (no se modifica)
 const PendingList = ({ onFlush }) => {
   const [list, setList] = React.useState([]);
   const mountedRef = React.useRef(true);
