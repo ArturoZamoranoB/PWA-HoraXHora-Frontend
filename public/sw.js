@@ -19,14 +19,12 @@ self.addEventListener("message", (event) => {
 });
 
 // ----------------------------------------------------
-// SAFE JSON PARA SAFARI / iOS
+// SAFE JSON
 // ----------------------------------------------------
 async function safeReadJson(req) {
   try {
-    const clone = req.clone();
-    return await clone.json();
-  } catch (err) {
-    console.warn("[SW] safeReadJson falló:", err);
+    return await req.clone().json();
+  } catch {
     return {};
   }
 }
@@ -35,28 +33,7 @@ async function safeReadJson(req) {
 // INSTALL
 // ----------------------------------------------------
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(APP_CACHE).then(async (cache) => {
-      const assets = [
-        "/",
-        "/index.html",
-        "/manifest.json",
-        "/favicon.ico",
-        "/logo192.png",
-        "/logo512.png",
-      ];
-
-      for (const asset of assets) {
-        try {
-          const res = await fetch(asset, { cache: "reload" });
-          if (res.ok) cache.put(asset, res.clone());
-        } catch (err) {
-          console.warn("[SW] No se pudo cachear:", asset);
-        }
-      }
-    })
-  );
-
+  console.log("[SW] Instalado");
   self.skipWaiting();
 });
 
@@ -64,16 +41,8 @@ self.addEventListener("install", (event) => {
 // ACTIVATE
 // ----------------------------------------------------
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((k) => ![APP_CACHE, API_CACHE].includes(k))
-          .map((k) => caches.delete(k))
-      )
-    )
-  );
-  self.clients.claim();
+  console.log("[SW] Activado");
+  event.waitUntil(clients.claim());
 });
 
 // ----------------------------------------------------
@@ -81,67 +50,77 @@ self.addEventListener("activate", (event) => {
 // ----------------------------------------------------
 function openIDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("horaxhora-db", 1);
+    const req = indexedDB.open("horaxhora-db", 2);
+
     req.onupgradeneeded = () => {
       const db = req.result;
+
       if (!db.objectStoreNames.contains("pending-activities")) {
-        db.createObjectStore("pending-activities", {
-          keyPath: "id",
-          autoIncrement: true,
-        });
+        db.createObjectStore("pending-activities", { keyPath: "id", autoIncrement: true });
+      }
+
+      if (!db.objectStoreNames.contains("accepted-activities")) {
+        db.createObjectStore("accepted-activities", { keyPath: "id", autoIncrement: true });
       }
     };
+
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 
-async function addPending(obj) {
+// --- CREATE OFFLINE ---
+async function addPendingCreate(obj) {
   const db = await openIDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("pending-activities", "readwrite");
-    const req = tx.objectStore("pending-activities").add(obj);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  db.transaction("pending-activities", "readwrite").objectStore("pending-activities").add(obj);
 }
 
-async function getPendings() {
+async function getPendingCreates() {
   const db = await openIDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("pending-activities", "readonly");
-    const req = tx.objectStore("pending-activities").getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
-  });
+  return db.transaction("pending-activities", "readonly").objectStore("pending-activities").getAll();
 }
 
-async function removePending(id) {
+async function removePendingCreate(id) {
   const db = await openIDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("pending-activities", "readwrite");
-    const req = tx.objectStore("pending-activities").delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
+  db.transaction("pending-activities", "readwrite").objectStore("pending-activities").delete(id);
+}
+
+// --- ACCEPT OFFLINE ---
+async function addPendingAccept(obj) {
+  const db = await openIDB();
+  db.transaction("accepted-activities", "readwrite").objectStore("accepted-activities").add(obj);
+}
+
+async function getPendingAccepts() {
+  const db = await openIDB();
+  return db.transaction("accepted-activities", "readonly").objectStore("accepted-activities").getAll();
+}
+
+async function removePendingAccept(id) {
+  const db = await openIDB();
+  db.transaction("accepted-activities", "readwrite").objectStore("accepted-activities").delete(id);
 }
 
 // ----------------------------------------------------
 // BACKGROUND SYNC
 // ----------------------------------------------------
 self.addEventListener("sync", (event) => {
-  if (event.tag === "sync-actividades") {
-    event.waitUntil(syncPendingActivities());
+  if (event.tag === "sync-create") {
+    event.waitUntil(syncCreate());
+  }
+
+  if (event.tag === "sync-accept") {
+    event.waitUntil(syncAccept());
   }
 });
 
-async function syncPendingActivities() {
-  const pendings = await getPendings();
+async function syncCreate() {
+  const pendings = await getPendingCreates();
 
   for (const p of pendings) {
     try {
       const res = await fetch(p.url, {
-        method: p.method,
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: AUTH_TOKEN ? `Bearer ${AUTH_TOKEN}` : "",
@@ -150,149 +129,113 @@ async function syncPendingActivities() {
       });
 
       if (res.ok) {
-        console.log("[SW] Sincronizado:", p.id);
-        await removePending(p.id);
-      } else {
-        console.warn("[SW] Server rechazó:", res.status);
+        console.log("[SW] Actividad creada sincronizada");
+        await removePendingCreate(p.id);
       }
-    } catch (err) {
-      console.warn("[SW] Error de red, reintentará:", err);
+    } catch {
       return;
     }
   }
 }
 
-// ----------------------------------------------------
-// FETCH
-// ----------------------------------------------------
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  const url = new URL(req.url);
-
-  // ----------------------------------------------------
-  // SPA navigation
-  // ----------------------------------------------------
-  if (req.mode === "navigate") {
-    event.respondWith(
-      caches.match("/index.html").then((cached) => cached || fetch(req))
-    );
-    return;
-  }
-
-  // ----------------------------------------------------
-  // STATIC FILES
-  // ----------------------------------------------------
-  if (req.method === "GET" && url.pathname.startsWith("/static/")) {
-    event.respondWith(
-      caches.open(APP_CACHE).then(async (cache) => {
-        const cached = await cache.match(req);
-        if (cached) return cached;
-
-        try {
-          const net = await fetch(req);
-          if (net.ok) cache.put(req, net.clone());
-          return net;
-        } catch {
-          return new Response("Recurso offline", { status: 503 });
-        }
-      })
-    );
-    return;
-  }
-
-  // ----------------------------------------------------
-  // API GET → NETWORK FIRST
-  // ----------------------------------------------------
-  if (req.method === "GET" && url.pathname.startsWith("/api/")) {
-    event.respondWith(
-      fetch(req)
-        .then(async (net) => {
-          const cache = await caches.open(API_CACHE);
-          if (net.ok) cache.put(req, net.clone());
-          return net;
-        })
-        .catch(async () => {
-          const cache = await caches.open(API_CACHE);
-          const cached = await cache.match(req);
-          return (
-            cached ||
-            new Response(JSON.stringify({ error: "Offline" }), {
-              status: 503,
-              headers: { "Content-Type": "application/json" },
-            })
-          );
-        })
-    );
-    return;
-  }
-
-async function syncAccepted() {
-  const pendings = await getAllPendingAccepts();
+async function syncAccept() {
+  const pendings = await getPendingAccepts();
 
   for (const p of pendings) {
     try {
       const res = await fetch(p.url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${p.token}`,
+          Authorization: p.token,
         },
       });
 
       if (res.ok) {
-        console.log("[SW] Aceptación sincronizada");
+        console.log("[SW] Actividad aceptada sincronizada");
         await removePendingAccept(p.id);
       }
-    } catch (e) {
-      console.warn("[SW] Error al sincronizar aceptación:", e);
+    } catch {
       return;
     }
   }
 }
 
-self.addEventListener("sync", (event) => {
-  if (event.tag === "sync-accepted") {
-    event.waitUntil(syncAccepted());
-  }
-  
-  // ----------------------------------------------------
-  // POST /api/solicitudes (offline fallback)
-  // ----------------------------------------------------
-  if (req.method === "POST" && url.pathname.startsWith("/api/solicitudes")) {
+// ----------------------------------------------------
+// FETCH LISTENER
+// ----------------------------------------------------
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  const url = new URL(req.url);
+
+  // ================================================
+  // OFFLINE CREATE (POST /solicitudes)
+  // ================================================
+  if (req.method === "POST" && url.pathname === "/api/solicitudes") {
     event.respondWith(
       (async () => {
         const body = await safeReadJson(req);
-
-        // Intento online
         try {
-          const netRes = await fetch(req);
-          return netRes;
+          return await fetch(req);
         } catch {
-          console.warn("[SW] Offline → guardando pending");
-
-          await addPending({
-            id: Date.now(),
+          console.warn("[SW] Offline → guardando creación");
+          await addPendingCreate({
             url: API_BASE + url.pathname,
             method: "POST",
-            payload: body || {},
-            createdAt: new Date().toISOString(),
+            payload: body,
+            id: Date.now(),
           });
 
           if (self.registration?.sync) {
-            try {
-              await self.registration.sync.register("sync-actividades");
-            } catch {}
+            await self.registration.sync.register("sync-create");
           }
 
           return new Response(
-            JSON.stringify({
-              ok: false,
-              message: "Actividad guardada offline. Se enviará al reconectar.",
-            }),
+            JSON.stringify({ offline: true, message: "Guardado offline" }),
             { status: 202, headers: { "Content-Type": "application/json" } }
           );
         }
       })()
     );
+    return;
   }
+
+  // ================================================
+  // OFFLINE ACCEPT (POST /solicitudes/:id/aceptar)
+  // ================================================
+  if (req.method === "POST" && url.pathname.endsWith("/aceptar")) {
+    event.respondWith(
+      (async () => {
+        try {
+          return await fetch(req);
+        } catch {
+          console.warn("[SW] Offline → guardando aceptación");
+
+          await addPendingAccept({
+            url: req.url,
+            method: "POST",
+            token: req.headers.get("Authorization"),
+            id: Date.now(),
+          });
+
+          if (self.registration?.sync) {
+            await self.registration.sync.register("sync-accept");
+          }
+
+          return new Response(
+            JSON.stringify({ offline: true, message: "Aceptación guardada offline" }),
+            { status: 202, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      })()
+    );
+    return;
+  }
+
+  // ================================================
+  // STATIC / GET normal
+  // ================================================
+  event.respondWith(
+    fetch(req).catch(() => caches.match(req))
+  );
 });
 
