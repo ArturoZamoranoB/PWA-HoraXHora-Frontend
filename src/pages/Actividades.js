@@ -43,41 +43,59 @@ const Actividades = () => {
     fetchPendientes();
   }, [navigate]);
 
-  const aceptarSolicitud = async (id) => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      navigate("/login");
+const aceptarSolicitud = async (id) => {
+  const token = localStorage.getItem("token");
+  if (!token) {
+    navigate("/login");
+    return;
+  }
+
+  if (!window.confirm("¿Quieres aceptar esta actividad?")) return;
+
+  try {
+    const res = await fetch(
+      `https://pwa-horaxhora-backend.onrender.com/api/solicitudes/${id}/aceptar`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    const data = await res.json();
+
+    // ✔ ONLINE y aceptada correctamente
+    if (res.ok) {
+      setSolicitudes((prev) => prev.filter((s) => s.id !== id));
+      alert("Actividad aceptada y enviada a tu panel ✔");
       return;
     }
 
-    if (!window.confirm("¿Quieres aceptar esta actividad?")) return;
+    alert(data.error || "No se pudo aceptar la actividad");
+  } catch (err) {
+    // ❌ ESTÁS OFFLINE → Guardar en IndexedDB
+    console.warn("Offline → guardando aceptación en IndexedDB");
 
-    try {
-      const res = await fetch(
-        `https://pwa-horaxhora-backend.onrender.com/api/solicitudes/${id}/aceptar`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+    await addPendingAccept({
+      url: `https://pwa-horaxhora-backend.onrender.com/api/solicitudes/${id}/aceptar`,
+      token,
+    });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.error || "No se pudo aceptar la actividad");
-        return;
-      }
-
-      setSolicitudes((prev) => prev.filter((s) => s.id !== id));
-      alert("Actividad aceptada y enviada a tu panel ✔");
-    } catch (err) {
-      console.error(err);
-      alert("Error de conexión al aceptar actividad");
+    // Registrar sincronización
+    if ("serviceWorker" in navigator && "SyncManager" in window) {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.sync.register("sync-accepted");
     }
-  };
+
+    // Quitarla de la UI como si ya estuviera aceptada
+    setSolicitudes((prev) => prev.filter((s) => s.id !== id));
+
+    alert("Actividad aceptada offline. Se sincronizará al volver el internet.");
+  }
+};
+
 
   return (
     <div style={styles.wrapper}>
