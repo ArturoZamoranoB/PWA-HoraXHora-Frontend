@@ -1,15 +1,15 @@
 // ----------------------------------------------------
 // CONFIG
 // ----------------------------------------------------
-const APP_CACHE = "app-shell-v3";
-const API_CACHE = "api-cache-v3";
+const APP_CACHE = "app-shell-v4";
+const API_CACHE = "api-cache-v4";
 
 const API_BASE = "https://pwa-horaxhora-backend.onrender.com";
 
 let AUTH_TOKEN = null;
 
 // ----------------------------------------------------
-// RECIBIR TOKEN DESDE FRONTEND
+// RECIBIR TOKEN DESDE EL FRONTEND
 // ----------------------------------------------------
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SET_TOKEN") {
@@ -27,7 +27,7 @@ async function safeReadJson(req) {
     return await clone.json();
   } catch (err) {
     console.warn("[SW] safeReadJson falló:", err);
-    return null;
+    return {};
   }
 }
 
@@ -146,14 +146,14 @@ async function syncPendingActivities() {
           "Content-Type": "application/json",
           Authorization: AUTH_TOKEN ? `Bearer ${AUTH_TOKEN}` : "",
         },
-        body: JSON.stringify(p.body),
+        body: JSON.stringify(p.payload),
       });
 
       if (res.ok) {
-        await removePending(p.id);
         console.log("[SW] Sincronizado:", p.id);
+        await removePending(p.id);
       } else {
-        console.warn("[SW] Rechazado por backend:", res.status);
+        console.warn("[SW] Server rechazó:", res.status);
       }
     } catch (err) {
       console.warn("[SW] Error de red, reintentará:", err);
@@ -170,7 +170,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
 
   // ----------------------------------------------------
-  // SPA NAVIGATION
+  // SPA navigation
   // ----------------------------------------------------
   if (req.mode === "navigate") {
     event.respondWith(
@@ -227,25 +227,25 @@ self.addEventListener("fetch", (event) => {
   }
 
   // ----------------------------------------------------
-  // POST /api/solicitudes (offline-fallback)
+  // POST /api/solicitudes (offline fallback)
   // ----------------------------------------------------
   if (req.method === "POST" && url.pathname.startsWith("/api/solicitudes")) {
     event.respondWith(
       (async () => {
         const body = await safeReadJson(req);
 
-        // Intentar online
+        // Intento online
         try {
           const netRes = await fetch(req);
           return netRes;
-        } catch (err) {
-          console.warn("[SW] Offline → guardando pendiente");
+        } catch {
+          console.warn("[SW] Offline → guardando pending");
 
           await addPending({
             id: Date.now(),
             url: API_BASE + url.pathname,
             method: "POST",
-            body: body || {},
+            payload: body || {},
             createdAt: new Date().toISOString(),
           });
 
