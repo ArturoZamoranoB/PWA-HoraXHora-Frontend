@@ -226,6 +226,34 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+async function syncAccepted() {
+  const pendings = await getAllPendingAccepts();
+
+  for (const p of pendings) {
+    try {
+      const res = await fetch(p.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${p.token}`,
+        },
+      });
+
+      if (res.ok) {
+        console.log("[SW] Aceptación sincronizada");
+        await removePendingAccept(p.id);
+      }
+    } catch (e) {
+      console.warn("[SW] Error al sincronizar aceptación:", e);
+      return;
+    }
+  }
+}
+
+self.addEventListener("sync", (event) => {
+  if (event.tag === "sync-accepted") {
+    event.waitUntil(syncAccepted());
+  }
+  
   // ----------------------------------------------------
   // POST /api/solicitudes (offline fallback)
   // ----------------------------------------------------
