@@ -10,7 +10,7 @@ const Profile = () => {
     id: null,
     name: "",
     email: "",
-    avatarUrl: "", // opcional si quieres avatar remoto
+    avatarUrl: "",
     created_at: "",
   });
 
@@ -24,7 +24,6 @@ const Profile = () => {
 
     const checkOnline = async () => {
       if (!navigator.onLine) return setOnline(false);
-      // test simple para evitar falsos positivos en localhost
       try {
         await fetch("https://www.google.com", { mode: "no-cors" });
         setOnline(true);
@@ -49,7 +48,6 @@ const Profile = () => {
           }
           return;
         }
-        // asumimos data.user o data (según backend)
         const u = data.user || data;
         setUser((prev) => ({
           ...prev,
@@ -68,7 +66,6 @@ const Profile = () => {
     };
 
     fetchProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate, token]);
 
   const logout = () => {
@@ -80,7 +77,6 @@ const Profile = () => {
     navigate("/dashboard");
   };
 
-  // editar en local y guardar
   const [form, setForm] = useState({ name: "", email: "" });
   useEffect(() => {
     setForm({ name: user.name, email: user.email });
@@ -88,7 +84,7 @@ const Profile = () => {
 
   const handleSave = async () => {
     if (!token) return;
-    // validaciones básicas
+
     if (!form.name || !form.email) return alert("Completa los datos");
 
     try {

@@ -13,20 +13,18 @@ const CrearActividad = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // cuando el navegador vuelve en línea --> intentar enviar pendientes
     const onOnline = () => {
       setMsg("Conexión restaurada: sincronizando actividades pendientes...");
       flushPending();
     };
     window.addEventListener("online", onOnline);
-    // limpieza
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
   const flushPending = async () => {
     const token = localStorage.getItem("token");
     const pendings = await getAllPendingActivities();
-    let syncSuccessCount = 0; // 👈 NUEVO: Contador de envíos exitosos
+    let syncSuccessCount = 0;
 
     for (const p of pendings) {
       try {
@@ -40,33 +38,26 @@ const CrearActividad = () => {
         });
         
         if (res.ok) {
-          // quitar de la cola
           await removePendingActivity(p.id);
           console.log("[flushPending] enviado y removido id:", p.id);
-          syncSuccessCount++; // 👈 Incrementar
+          syncSuccessCount++;
         } else {
-          // si el servidor responde con client error (4xx) -> eliminar porque no se arreglará con reintentos
           if (res.status >= 400 && res.status < 500) {
             console.warn("[flushPending] server rejected pending (client error), removing:", p.id, res.status);
             await removePendingActivity(p.id);
           } else {
             console.warn("[flushPending] server error, dejar en cola para reintentar:", p.id, res.status);
-            // no removemos; reintentará después
           }
         }
       } catch (err) {
         console.warn("[flushPending] error de red al enviar pendiente, saliendo para reintentar luego:", err);
-        // fallo de red: abortar el loop para reintentar cuando volvamos online o con sync
         return;
       }
     }
     
     setMsg("Pendientes sincronizados.");
-
-    // 👈 NUEVO: Si se sincronizó algo, forzar la navegación/recarga del dashboard
     if (syncSuccessCount > 0) {
       console.log(`[flushPending] ${syncSuccessCount} actividades sincronizadas. Navegando para recargar datos.`);
-      // Usamos replace: true para evitar que el usuario vuelva a esta página con el botón Atrás
       navigate("/dashboard", { replace: true }); 
       return; 
     }
@@ -100,17 +91,17 @@ const CrearActividad = () => {
 
     const payload = { titulo, descripcion, alumno, fecha };
 
-    // intenta enviar ahora
+    
     const result = await trySendNow(payload);
 
     if (result.ok) {
       setMsg("Actividad creada y guardada en el servidor ✔");
-      // Navegar al dashboard al terminar con éxito (siempre y cuando Dashboard recargue al montar)
+    
       setTimeout(() => navigate("/dashboard", { replace: true }), 900);
       return;
     }
 
-    // si fallo por red o similar => guardar en IndexedDB como pendiente
+    
     const pending = {
       payload,
       createdAt: new Date().toISOString(),
@@ -119,8 +110,6 @@ const CrearActividad = () => {
     try {
       const id = await addPendingActivity(pending);
       console.log("[handleSubmit] guardado en IDB id:", id);
-
-      // registrar sync si existe serviceWorker + SyncManager
       if ("serviceWorker" in navigator && "SyncManager" in window) {
         try {
           const reg = await navigator.serviceWorker.ready;
@@ -180,7 +169,6 @@ const CrearActividad = () => {
 
         <div style={styles.pendingBox}>
           <h4>Actividades en cola (pendientes)</h4>
-          {/* Se pasa flushPending como prop para el botón de reintento manual */}
           <PendingList onFlush={flushPending} /> 
         </div>
       </div>
@@ -188,12 +176,10 @@ const CrearActividad = () => {
   );
 };
 
-// Componente para listar pendientes locales (no se modifica)
+
 const PendingList = ({ onFlush }) => {
   const [list, setList] = React.useState([]);
   const mountedRef = React.useRef(true);
-
-  // helper: seguridad al formatear cada item
   const safeItem = (it) => {
     if (!it || typeof it !== "object") return { id: null, payload: {}, createdAt: null };
     return {
@@ -219,7 +205,6 @@ const PendingList = ({ onFlush }) => {
       }
     };
 
-    // carga inicial y refresco periódico
     load();
     const interval = setInterval(load, 3000);
 

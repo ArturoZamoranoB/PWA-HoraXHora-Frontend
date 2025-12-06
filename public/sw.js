@@ -5,10 +5,7 @@ const API_BASE = "https://pwa-horaxhora-backend.onrender.com";
 
 let AUTH_TOKEN = null;
 
-// ----------------------------------------------------
-// RECIBIR TOKEN DESDE FRONTEND
-// RECIBIR TOKEN DESDE EL FRONTEND
-// ----------------------------------------------------
+
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SET_TOKEN") {
     AUTH_TOKEN = event.data.token;
@@ -16,9 +13,7 @@ self.addEventListener("message", (event) => {
   }
 });
 
-// ----------------------------------------------------
-// SAFE JSON PARA SAFARI / iOS
-// ----------------------------------------------------
+
 async function safeReadJson(req) {
   try {
     const clone = req.clone();
@@ -29,9 +24,7 @@ async function safeReadJson(req) {
   }
 }
 
-// ----------------------------------------------------
-// INSTALL
-// ----------------------------------------------------
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(APP_CACHE).then(async (cache) => {
@@ -58,9 +51,7 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-// ----------------------------------------------------
-// ACTIVATE
-// ----------------------------------------------------
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -74,9 +65,7 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// ----------------------------------------------------
-// IndexedDB HELPERS
-// ----------------------------------------------------
+
 function openIDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open("horaxhora-db", 1);
@@ -124,9 +113,7 @@ async function removePending(id) {
   });
 }
 
-// ----------------------------------------------------
-// BACKGROUND SYNC
-// ----------------------------------------------------
+
 self.addEventListener("sync", (event) => {
   if (event.tag === "sync-actividades") {
     event.waitUntil(syncPendingActivities());
@@ -192,9 +179,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // ----------------------------------------------------
-  // API GET → NETWORK FIRST
-  // ----------------------------------------------------
+
   if (req.method === "GET" && url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(req)

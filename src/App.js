@@ -12,10 +12,10 @@ function App() {
   return (
     <Router>
       <Routes>
-        {/* Redirige la raíz a /login */}
+     
         <Route path="/" element={<Navigate to="/login" replace />} />
 
-        {/* Pantallas */}
+ 
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
@@ -23,7 +23,7 @@ function App() {
         <Route path="/perfil" element={<Profile />} />
         <Route path="/crear" element={<CrearActividad />} />
 
-        {/* Ruta catch-all: si no existe, redirige a login */}
+       
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Router>
