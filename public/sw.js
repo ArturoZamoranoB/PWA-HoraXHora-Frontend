@@ -1,324 +1,258 @@
-/* ----------------------------------------------------
-   CONFIG
----------------------------------------------------- */
-const APP_CACHE = "app-shell-v1";
-const API_CACHE = "api-cache-v1";
+const APP_CACHE = "app-shell-v4";
+const API_CACHE = "api-cache-v4";
 
-const ORIGIN = self.location.origin;
+const API_BASE = "https://pwa-horaxhora-backend.onrender.com";
 
-const APP_ASSETS = [
-  "/",                    
-  "/index.html",
-  "/manifest.json",
-  "/favicon.ico",
-  "/logo192.png",
-  "/logo512.png",
-];
+let AUTH_TOKEN = null;
 
-/* ----------------------------------------------------
-   INSTALL (robusto)
----------------------------------------------------- */
+// ----------------------------------------------------
+// RECIBIR TOKEN DESDE FRONTEND
+// RECIBIR TOKEN DESDE EL FRONTEND
+// ----------------------------------------------------
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SET_TOKEN") {
+    AUTH_TOKEN = event.data.token;
+    console.log("[SW] Token recibido:", AUTH_TOKEN);
+  }
+});
+
+// ----------------------------------------------------
+// SAFE JSON PARA SAFARI / iOS
+// ----------------------------------------------------
+async function safeReadJson(req) {
+  try {
+    const clone = req.clone();
+    return await clone.json();
+  } catch (err) {
+    console.warn("[SW] safeReadJson falló:", err);
+    return {};
+  }
+}
+
+// ----------------------------------------------------
+// INSTALL
+// ----------------------------------------------------
 self.addEventListener("install", (event) => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(APP_CACHE);
-    for (const path of APP_ASSETS) {
-      const url = ORIGIN + path;
-      try {
-        const res = await fetch(url, { cache: "reload" });
-        if (res && res.ok) {
-          await cache.put(url, res.clone());
-          console.log("[SW] Cached:", path);
-        } else {
-          console.warn("[SW] Failed caching:", url, res && res.status);
+  event.waitUntil(
+    caches.open(APP_CACHE).then(async (cache) => {
+      const assets = [
+        "/",
+        "/index.html",
+        "/manifest.json",
+        "/favicon.ico",
+        "/logo192.png",
+        "/logo512.png",
+      ];
+
+      for (const asset of assets) {
+        try {
+          const res = await fetch(asset, { cache: "reload" });
+          if (res.ok) cache.put(asset, res.clone());
+        } catch (err) {
+          console.warn("[SW] No se pudo cachear:", asset);
         }
-      } catch (err) {
-        console.warn("[SW] Precache error:", url, err);
       }
-    }
-  })());
+    })
+  );
+
   self.skipWaiting();
 });
 
-/* ----------------------------------------------------
-   ACTIVATE
----------------------------------------------------- */
+// ----------------------------------------------------
+// ACTIVATE
+// ----------------------------------------------------
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    (async () => {
-      const keys = await caches.keys();
-      await Promise.all(
+    caches.keys().then((keys) =>
+      Promise.all(
         keys
           .filter((k) => ![APP_CACHE, API_CACHE].includes(k))
           .map((k) => caches.delete(k))
-      );
-      await self.clients.claim();
-    })()
+      )
+    )
   );
+  self.clients.claim();
 });
 
-/* ----------------------------------------------------
-   INDEXEDDB v2 (crear + aceptar offline)
----------------------------------------------------- */
+// ----------------------------------------------------
+// IndexedDB HELPERS
+// ----------------------------------------------------
 function openIDB() {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open("horaxhora-db", 2);
-
-    r.onupgradeneeded = () => {
-      const db = r.result;
-
+    const req = indexedDB.open("horaxhora-db", 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
       if (!db.objectStoreNames.contains("pending-activities")) {
-        db.createObjectStore("pending-activities", { keyPath: "id", autoIncrement: true });
-      }
-
-      if (!db.objectStoreNames.contains("pending-accept")) {
-        db.createObjectStore("pending-accept", { keyPath: "id", autoIncrement: true });
+        db.createObjectStore("pending-activities", {
+          keyPath: "id",
+          autoIncrement: true,
+        });
       }
     };
-
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
   });
 }
 
-/* ----------------------------------------------------
-   CREATE FUNCTIONS
----------------------------------------------------- */
-async function addPendingCreate(obj) {
+async function addPending(obj) {
   const db = await openIDB();
-  db.transaction("pending-activities", "readwrite").objectStore("pending-activities").add(obj);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("pending-activities", "readwrite");
+    const req = tx.objectStore("pending-activities").add(obj);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
 
-async function getPendingCreates() {
+async function getPendings() {
   const db = await openIDB();
-  return db.transaction("pending-activities", "readonly").objectStore("pending-activities").getAll();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("pending-activities", "readonly");
+    const req = tx.objectStore("pending-activities").getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
 }
 
-async function removePendingCreate(id) {
+async function removePending(id) {
   const db = await openIDB();
-  db.transaction("pending-activities", "readwrite").objectStore("pending-activities").delete(id);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("pending-activities", "readwrite");
+    const req = tx.objectStore("pending-activities").delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
 }
 
-/* ----------------------------------------------------
-   ACCEPT FUNCTIONS
----------------------------------------------------- */
-async function addPendingAccept(obj) {
-  const db = await openIDB();
-  db.transaction("pending-accept", "readwrite").objectStore("pending-accept").add(obj);
-}
-
-async function getPendingAccepts() {
-  const db = await openIDB();
-  return db.transaction("pending-accept", "readonly").objectStore("pending-accept").getAll();
-}
-
-async function removePendingAccept(id) {
-  const db = await openIDB();
-  db.transaction("pending-accept", "readwrite").objectStore("pending-accept").delete(id);
-}
-
-/* ----------------------------------------------------
-   BACKGROUND SYNC HANDLERS
----------------------------------------------------- */
+// ----------------------------------------------------
+// BACKGROUND SYNC
+// ----------------------------------------------------
 self.addEventListener("sync", (event) => {
   if (event.tag === "sync-actividades") {
     event.waitUntil(syncPendingActivities());
   }
-  if (event.tag === "sync-accepted") {
-    event.waitUntil(syncPendingAccepts());
-  }
 });
 
-/* ---------------- SYNC: CREATE ---------------- */
 async function syncPendingActivities() {
-  const pendings = await getPendingCreates();
+  const pendings = await getPendings();
 
   for (const p of pendings) {
     try {
       const res = await fetch(p.url, {
-        method: "POST",
-        headers: p.headers,
-        body: JSON.stringify(p.body),
-      });
-
-      if (res && res.ok) {
-        console.log("[SW] Created synced:", p.id);
-        await removePendingCreate(p.id);
-      }
-    } catch (err) {
-      console.warn("[SW] Network error → retry later");
-      return;
-    }
-  }
-}
-
-/* ---------------- SYNC: ACCEPT ---------------- */
-async function syncPendingAccepts() {
-  const pendings = await getPendingAccepts();
-
-  for (const p of pendings) {
-    try {
-      const res = await fetch(p.url, {
-        method: "POST",
-        headers: p.headers,
+        method: p.method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: AUTH_TOKEN ? `Bearer ${AUTH_TOKEN}` : "",
+        },
+        body: JSON.stringify(p.payload),
       });
 
       if (res.ok) {
-        console.log("[SW] Accept synced:", p.id);
-        await removePendingAccept(p.id);
+        console.log("[SW] Sincronizado:", p.id);
+        await removePending(p.id);
+      } else {
+        console.warn("[SW] Server rechazó:", res.status);
       }
     } catch (err) {
-      console.warn("[SW] Network error on accept → retry later");
+      console.warn("[SW] Error de red, reintentará:", err);
       return;
     }
   }
 }
 
-/* ----------------------------------------------------
-   FETCH HANDLER
----------------------------------------------------- */
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  /* ---------- SPA Navigation ---------- */
+ 
   if (req.mode === "navigate") {
-    event.respondWith((async () => {
-      const cache = await caches.open(APP_CACHE);
-      const cached =
-        (await cache.match(ORIGIN + "/index.html")) ||
-        (await cache.match("/index.html")) ||
-        (await cache.match("index.html"));
-
-      if (cached) return cached;
-
-      try {
-        return await fetch(req);
-      } catch {
-        const root =
-          (await cache.match(ORIGIN + "/")) ||
-          (await cache.match("/"));
-
-        if (root) return root;
-
-        return new Response("Sin conexión y sin app cacheada 😭", {
-          status: 503,
-          headers: { "Content-Type": "text/plain" },
-        });
-      }
-    })());
+    event.respondWith(
+      caches.match("/index.html").then((cached) => cached || fetch(req))
+    );
     return;
   }
 
-  /* ---------- STATIC FILES ---------- */
+ 
   if (req.method === "GET" && url.pathname.startsWith("/static/")) {
-    event.respondWith((async () => {
-      const cache = await caches.open(APP_CACHE);
-      const cached = await cache.match(req);
-
-      if (cached) return cached;
-
-      try {
-        const net = await fetch(req);
-        if (net.ok) cache.put(req, net.clone());
-        return net;
-      } catch {
-        return cached || new Response("Recurso no disponible offline", { status: 503 });
-      }
-    })());
-    return;
-  }
-
-  /* ---------- API GET ---------- */
-  if (req.method === "GET" && url.pathname.startsWith("/api/")) {
-    event.respondWith((async () => {
-      try {
-        const net = await fetch(req);
-        const cache = await caches.open(API_CACHE);
-        if (net.ok) cache.put(req, net.clone());
-        return net;
-      } catch {
-        const cache = await caches.open(API_CACHE);
+    event.respondWith(
+      caches.open(APP_CACHE).then(async (cache) => {
         const cached = await cache.match(req);
-        return (
-          cached ||
-          new Response(JSON.stringify({ error: "Offline" }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          })
-        );
-      }
-    })());
-    return;
-  }
-
-  /* ---------- POST: CREATE ACTIVITY ---------- */
-  if (req.method === "POST" && url.pathname === "/api/solicitudes") {
-    event.respondWith((async () => {
-      let body = null;
-
-      try {
-        body = await req.clone().json();
-      } catch {}
-
-      try {
-        return await fetch(req);
-      } catch {
-        console.warn("[SW] Offline → saving create");
-
-        await addPendingCreate({
-          id: Date.now(),
-          url: url.href,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: req.headers.get("Authorization"),
-          },
-          body,
-        });
+        if (cached) return cached;
 
         try {
-          await self.registration.sync.register("sync-actividades");
-        } catch {}
-
-        return new Response(JSON.stringify({ offline: true }), {
-          status: 202,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    })());
+          const net = await fetch(req);
+          if (net.ok) cache.put(req, net.clone());
+          return net;
+        } catch {
+          return new Response("Recurso offline", { status: 503 });
+        }
+      })
+    );
     return;
   }
 
-  /* ---------- POST: ACCEPT ACTIVITY ---------- */
-  if (req.method === "POST" && url.pathname.endsWith("/aceptar")) {
-    event.respondWith((async () => {
-      try {
-        return await fetch(req);
-      } catch {
-        console.warn("[SW] Offline → saving accept");
+  // ----------------------------------------------------
+  // API GET → NETWORK FIRST
+  // ----------------------------------------------------
+  if (req.method === "GET" && url.pathname.startsWith("/api/")) {
+    event.respondWith(
+      fetch(req)
+        .then(async (net) => {
+          const cache = await caches.open(API_CACHE);
+          if (net.ok) cache.put(req, net.clone());
+          return net;
+        })
+        .catch(async () => {
+          const cache = await caches.open(API_CACHE);
+          const cached = await cache.match(req);
+          return (
+            cached ||
+            new Response(JSON.stringify({ error: "Offline" }), {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            })
+          );
+        })
+    );
+    return;
+  }
 
-        await addPendingAccept({
-          id: Date.now(),
-          url: req.url,
-          method: "POST",
-          headers: {
-            Authorization: req.headers.get("Authorization"),
-          },
-        });
+ 
+  if (req.method === "POST" && url.pathname.startsWith("/api/solicitudes")) {
+    event.respondWith(
+      (async () => {
+        const body = await safeReadJson(req);
 
         try {
-          await self.registration.sync.register("sync-accepted");
-        } catch {}
+          const netRes = await fetch(req);
+          return netRes;
+        } catch {
+          console.warn("[SW] Offline → guardando pending");
 
-        return new Response(JSON.stringify({ offline: true }), {
-          status: 202,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    })());
-    return;
+          await addPending({
+            id: Date.now(),
+            url: API_BASE + url.pathname,
+            method: "POST",
+            payload: body || {},
+            createdAt: new Date().toISOString(),
+          });
+
+          if (self.registration?.sync) {
+            try {
+              await self.registration.sync.register("sync-actividades");
+            } catch {}
+          }
+
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              message: "Actividad guardada offline. Se enviará al reconectar.",
+            }),
+            { status: 202, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      })()
+    );
   }
-
-  /* ---------- FALLBACK GENERAL ---------- */
-  event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
