@@ -16,6 +16,17 @@ const APP_ASSETS = [
 ];
 
 /* ----------------------------------------------------
+   SAFE JSON (para evitar body null)
+---------------------------------------------------- */
+async function safeJson(req) {
+  try {
+    return await req.clone().json();
+  } catch {
+    return {};
+  }
+}
+
+/* ----------------------------------------------------
    INSTALL (robusto)
 ---------------------------------------------------- */
 self.addEventListener("install", (event) => {
@@ -133,8 +144,8 @@ async function syncPendingActivities() {
     try {
       const res = await fetch(p.url, {
         method: "POST",
-        headers: p.headers,
-        body: JSON.stringify(p.body),
+        headers: p.headers || { "Content-Type": "application/json" },
+        body: JSON.stringify(p.body || {}),
       });
 
       if (res && res.ok) {
@@ -156,7 +167,7 @@ async function syncPendingAccepts() {
     try {
       const res = await fetch(p.url, {
         method: "POST",
-        headers: p.headers,
+        headers: p.headers || {},
       });
 
       if (res.ok) {
@@ -247,10 +258,7 @@ self.addEventListener("fetch", (event) => {
   /* ---------------- POST: CREATE ACTIVITY ---------------- */
   if (req.method === "POST" && url.pathname === "/api/solicitudes") {
     event.respondWith((async () => {
-      let body = null;
-      try {
-        body = await req.clone().json();
-      } catch {}
+      const body = await safeJson(req);
 
       try {
         return await fetch(req);
@@ -259,8 +267,7 @@ self.addEventListener("fetch", (event) => {
 
         await addPendingCreate({
           id: Date.now(),
-          url: url.href,
-          method: "POST",
+          url: req.url,
           headers: {
             "Content-Type": "application/json",
             Authorization: req.headers.get("Authorization"),
@@ -269,8 +276,7 @@ self.addEventListener("fetch", (event) => {
         });
 
         try {
-          const reg = await self.registration;
-          await reg.sync.register("sync-actividades");
+          await self.registration.sync.register("sync-actividades");
         } catch {}
 
         return new Response(JSON.stringify({ offline: true }), {
@@ -293,7 +299,6 @@ self.addEventListener("fetch", (event) => {
         await addPendingAccept({
           id: Date.now(),
           url: req.url,
-          method: "POST",
           headers: {
             Authorization: req.headers.get("Authorization"),
           },
@@ -311,6 +316,10 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
+
+  /* ---------------- FALLBACK ---------------- */
+  event.respondWith(fetch(req).catch(() => caches.match(req)));
+});
 
   /* ---------------- FALLBACK ---------------- */
   event.respondWith(fetch(req).catch(() => caches.match(req)));
