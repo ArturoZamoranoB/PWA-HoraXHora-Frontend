@@ -57,7 +57,7 @@ self.addEventListener("activate", (event) => {
 });
 
 /* ----------------------------------------------------
-   INDEXEDDB V2 (crear + aceptar actividad offline)
+   INDEXEDDB v2 (crear + aceptar offline)
 ---------------------------------------------------- */
 function openIDB() {
   return new Promise((resolve, reject) => {
@@ -80,7 +80,9 @@ function openIDB() {
   });
 }
 
-/* ------------------ CREATE ------------------ */
+/* ----------------------------------------------------
+   CREATE FUNCTIONS
+---------------------------------------------------- */
 async function addPendingCreate(obj) {
   const db = await openIDB();
   db.transaction("pending-activities", "readwrite").objectStore("pending-activities").add(obj);
@@ -96,7 +98,9 @@ async function removePendingCreate(id) {
   db.transaction("pending-activities", "readwrite").objectStore("pending-activities").delete(id);
 }
 
-/* ------------------ ACCEPT ------------------ */
+/* ----------------------------------------------------
+   ACCEPT FUNCTIONS
+---------------------------------------------------- */
 async function addPendingAccept(obj) {
   const db = await openIDB();
   db.transaction("pending-accept", "readwrite").objectStore("pending-accept").add(obj);
@@ -113,19 +117,18 @@ async function removePendingAccept(id) {
 }
 
 /* ----------------------------------------------------
-   BACKGROUND SYNC
+   BACKGROUND SYNC HANDLERS
 ---------------------------------------------------- */
 self.addEventListener("sync", (event) => {
   if (event.tag === "sync-actividades") {
     event.waitUntil(syncPendingActivities());
   }
-
   if (event.tag === "sync-accepted") {
     event.waitUntil(syncPendingAccepts());
   }
 });
 
-/* ------ SYNC CREATE ------ */
+/* ---------------- SYNC: CREATE ---------------- */
 async function syncPendingActivities() {
   const pendings = await getPendingCreates();
 
@@ -142,13 +145,13 @@ async function syncPendingActivities() {
         await removePendingCreate(p.id);
       }
     } catch (err) {
-      console.warn("[SW] Network error, retry later");
+      console.warn("[SW] Network error → retry later");
       return;
     }
   }
 }
 
-/* ------ SYNC ACCEPT ------ */
+/* ---------------- SYNC: ACCEPT ---------------- */
 async function syncPendingAccepts() {
   const pendings = await getPendingAccepts();
 
@@ -164,7 +167,7 @@ async function syncPendingAccepts() {
         await removePendingAccept(p.id);
       }
     } catch (err) {
-      console.warn("[SW] Network error on accept");
+      console.warn("[SW] Network error on accept → retry later");
       return;
     }
   }
@@ -177,7 +180,7 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  /* ---------------- SPA navigation ---------------- */
+  /* ---------- SPA Navigation ---------- */
   if (req.mode === "navigate") {
     event.respondWith((async () => {
       const cache = await caches.open(APP_CACHE);
@@ -191,7 +194,10 @@ self.addEventListener("fetch", (event) => {
       try {
         return await fetch(req);
       } catch {
-        const root = (await cache.match(ORIGIN + "/")) || (await cache.match("/"));
+        const root =
+          (await cache.match(ORIGIN + "/")) ||
+          (await cache.match("/"));
+
         if (root) return root;
 
         return new Response("Sin conexión y sin app cacheada 😭", {
@@ -203,11 +209,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* ---------------- STATIC / GET hash ---------------- */
+  /* ---------- STATIC FILES ---------- */
   if (req.method === "GET" && url.pathname.startsWith("/static/")) {
     event.respondWith((async () => {
       const cache = await caches.open(APP_CACHE);
       const cached = await cache.match(req);
+
       if (cached) return cached;
 
       try {
@@ -221,7 +228,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* ---------------- GET API ---------------- */
+  /* ---------- API GET ---------- */
   if (req.method === "GET" && url.pathname.startsWith("/api/")) {
     event.respondWith((async () => {
       try {
@@ -244,10 +251,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* ---------------- POST: CREATE ACTIVITY ---------------- */
+  /* ---------- POST: CREATE ACTIVITY ---------- */
   if (req.method === "POST" && url.pathname === "/api/solicitudes") {
     event.respondWith((async () => {
       let body = null;
+
       try {
         body = await req.clone().json();
       } catch {}
@@ -269,8 +277,7 @@ self.addEventListener("fetch", (event) => {
         });
 
         try {
-          const reg = await self.registration;
-          await reg.sync.register("sync-actividades");
+          await self.registration.sync.register("sync-actividades");
         } catch {}
 
         return new Response(JSON.stringify({ offline: true }), {
@@ -282,7 +289,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* ---------------- POST: ACCEPT ACTIVITY ---------------- */
+  /* ---------- POST: ACCEPT ACTIVITY ---------- */
   if (req.method === "POST" && url.pathname.endsWith("/aceptar")) {
     event.respondWith((async () => {
       try {
@@ -312,6 +319,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  /* ---------------- FALLBACK ---------------- */
+  /* ---------- FALLBACK GENERAL ---------- */
   event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
