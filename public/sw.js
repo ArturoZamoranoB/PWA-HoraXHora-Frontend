@@ -315,4 +315,3 @@ self.addEventListener("fetch", (event) => {
   /* ---------------- FALLBACK ---------------- */
   event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
-

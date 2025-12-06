@@ -237,7 +237,3 @@ const styles = {
 };
 
 export default Actividades;
-
-};
-
-export default Actividades;
