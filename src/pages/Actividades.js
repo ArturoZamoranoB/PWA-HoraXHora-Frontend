@@ -1,17 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { addPendingAccept } from "../utils/idb"; // ✔ NECESARIO
 
 const Actividades = () => {
   const [solicitudes, setSolicitudes] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  /* ---------------------------------------------------------
-     Cargar actividades pendientes (online)
-  --------------------------------------------------------- */
   useEffect(() => {
     const token = localStorage.getItem("token");
+
     if (!token) {
       navigate("/login");
       return;
@@ -47,11 +44,10 @@ const Actividades = () => {
     fetchPendientes();
   }, [navigate]);
 
-  /* ---------------------------------------------------------
-     Aceptar solicitud (Online + Offline)
-  --------------------------------------------------------- */
+
   const aceptarSolicitud = async (id) => {
     const token = localStorage.getItem("token");
+
     if (!token) {
       navigate("/login");
       return;
@@ -60,7 +56,6 @@ const Actividades = () => {
     if (!window.confirm("¿Quieres aceptar esta actividad?")) return;
 
     try {
-      // ✔ Intento online
       const res = await fetch(
         `https://pwa-horaxhora-backend.onrender.com/api/solicitudes/${id}/aceptar`,
         {
@@ -74,50 +69,30 @@ const Actividades = () => {
 
       const data = await res.json();
 
-      if (res.ok) {
-        // ONLINE → Actualizar UI
-        setSolicitudes((prev) => prev.filter((s) => s.id !== id));
-        alert("Actividad aceptada y enviada a tu panel ✔");
+      if (!res.ok) {
+        alert(data.error || "No se pudo aceptar la actividad");
         return;
       }
 
-      alert(data.error || "No se pudo aceptar la actividad");
-    } catch (err) {
-      // ❌ OFFLINE → Guardar en IndexedDB
-      console.warn("📌 OFFLINE → Guardando aceptación en IndexedDB");
-
-      await addPendingAccept({
-        id: Date.now(),
-        url: `https://pwa-horaxhora-backend.onrender.com/api/solicitudes/${id}/aceptar`,
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      // Registrar sync
-      if ("serviceWorker" in navigator && "SyncManager" in window) {
-        const reg = await navigator.serviceWorker.ready;
-        await reg.sync.register("sync-accepted");
-      }
-
-      // Mostrar como aceptada
       setSolicitudes((prev) => prev.filter((s) => s.id !== id));
 
-      alert("Actividad aceptada offline. Se enviará automáticamente al reconectar.");
+      alert("Actividad aceptada y enviada a tu panel ✔");
+    } catch (err) {
+      console.error(err);
+      alert("Error de conexión al aceptar actividad");
     }
   };
 
-  /* ---------------------------------------------------------
-     UI
-  --------------------------------------------------------- */
   return (
     <div style={styles.wrapper}>
       <div style={styles.container}>
+        {/* Encabezado */}
         <header style={styles.header}>
           <div>
             <h1 style={styles.title}>Actividades disponibles</h1>
             <p style={styles.subtitle}>
-              Elige las actividades que quieres tomar. Las aceptadas
-              desaparecerán de esta lista y aparecerán en tu panel.
+              Elige las actividades que quieres tomar.  
+              Las aceptadas desaparecerán de esta lista y aparecerán en tu panel.
             </p>
           </div>
 
@@ -126,6 +101,7 @@ const Actividades = () => {
           </button>
         </header>
 
+        {/* Contenido */}
         {loading ? (
           <p style={styles.empty}>Cargando actividades...</p>
         ) : solicitudes.length === 0 ? (
@@ -154,10 +130,6 @@ const Actividades = () => {
   );
 };
 
-/* ---------------------------------------------------------
-   ESTILOS
---------------------------------------------------------- */
-
 const styles = {
   wrapper: {
     minHeight: "100vh",
@@ -169,12 +141,15 @@ const styles = {
     justifyContent: "center",
     alignItems: "flex-start",
   },
+
   container: {
     width: "100%",
     maxWidth: "1100px",
     color: "#e5e7eb",
-    fontFamily: "system-ui",
+    fontFamily:
+      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
+
   header: {
     display: "flex",
     justifyContent: "space-between",
@@ -183,17 +158,16 @@ const styles = {
     marginBottom: "1.2rem",
     flexWrap: "wrap",
   },
-  title: {
-    margin: 0,
-    fontSize: "1.8rem",
-    fontWeight: 800,
-  },
+
+  title: { margin: 0, fontSize: "1.8rem", fontWeight: 800 },
+
   subtitle: {
     margin: "0.3rem 0 0",
     fontSize: "0.9rem",
     color: "#cbd5f5",
     maxWidth: "520px",
   },
+
   btnSec: {
     borderRadius: "999px",
     border: "1px solid rgba(148,163,184,0.7)",
@@ -202,22 +176,32 @@ const styles = {
     color: "#e5e7eb",
     cursor: "pointer",
     fontSize: "0.85rem",
+    fontWeight: 500,
+    whiteSpace: "nowrap",
   },
+
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: "1rem",
   },
+
   card: {
     background: "rgba(15,23,42,0.9)",
     borderRadius: "1rem",
     padding: "1rem",
     border: "1px solid rgba(34,197,94,0.4)",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.6)",
   },
+
   cardTitle: { margin: 0, fontSize: "1.1rem", fontWeight: 700 },
+
   cardAlumno: { margin: "0.4rem 0 0.1rem", fontSize: "0.9rem", color: "#bbf7d0" },
+
   cardFecha: { margin: "0 0 0.5rem", fontSize: "0.8rem", color: "#86efac" },
-  cardDesc: { fontSize: "0.9rem", marginBottom: "0.75rem" },
+
+  cardDesc: { fontSize: "0.9rem", color: "#e5e7eb", marginBottom: "0.75rem" },
+
   acceptBtn: {
     width: "100%",
     padding: "0.55rem",
@@ -226,8 +210,11 @@ const styles = {
     cursor: "pointer",
     background:
       "linear-gradient(135deg, #22c55e 0%, #16a34a 50%, #22c55e 100%)",
+    color: "#052e16",
     fontWeight: 700,
+    fontSize: "0.9rem",
   },
+
   empty: {
     textAlign: "center",
     marginTop: "2rem",
