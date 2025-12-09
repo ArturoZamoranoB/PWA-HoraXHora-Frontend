@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { addPendingActivity, getAllPendingActivities, removePendingActivity } from "../utils/idb";
 
@@ -12,16 +12,8 @@ const CrearActividad = () => {
   const [msg, setMsg] = useState("");
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const onOnline = () => {
-      setMsg("Conexión restaurada: sincronizando actividades pendientes...");
-      flushPending();
-    };
-    window.addEventListener("online", onOnline);
-    return () => window.removeEventListener("online", onOnline);
-  }, []);
-
-  const flushPending = async () => {
+  // ⭐ flushPending ahora es estable gracias a useCallback
+  const flushPending = useCallback(async () => {
     const token = localStorage.getItem("token");
     const pendings = await getAllPendingActivities();
     let syncSuccessCount = 0;
@@ -36,32 +28,42 @@ const CrearActividad = () => {
           },
           body: JSON.stringify(p.payload),
         });
-        
+
         if (res.ok) {
           await removePendingActivity(p.id);
           console.log("[flushPending] enviado y removido id:", p.id);
           syncSuccessCount++;
         } else {
           if (res.status >= 400 && res.status < 500) {
-            console.warn("[flushPending] server rejected pending (client error), removing:", p.id, res.status);
+            console.warn("[flushPending] client error, eliminando:", p.id);
             await removePendingActivity(p.id);
           } else {
-            console.warn("[flushPending] server error, dejar en cola para reintentar:", p.id, res.status);
+            console.warn("[flushPending] server error, reintentar luego:", p.id);
           }
         }
       } catch (err) {
-        console.warn("[flushPending] error de red al enviar pendiente, saliendo para reintentar luego:", err);
+        console.warn("[flushPending] error de red, reintentar luego:", err);
         return;
       }
     }
-    
+
     setMsg("Pendientes sincronizados.");
     if (syncSuccessCount > 0) {
-      console.log(`[flushPending] ${syncSuccessCount} actividades sincronizadas. Navegando para recargar datos.`);
-      navigate("/dashboard", { replace: true }); 
-      return; 
+      console.log(`[flushPending] ${syncSuccessCount} actividades sincronizadas.`);
+      navigate("/dashboard", { replace: true });
     }
-  };
+  }, [navigate]);
+
+  // ⭐ useEffect ahora puede depender de flushPending sin causar loops
+  useEffect(() => {
+    const onOnline = () => {
+      setMsg("Conexión restaurada: sincronizando actividades pendientes...");
+      flushPending();
+    };
+
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [flushPending]);
 
   const trySendNow = async (payload) => {
     const token = localStorage.getItem("token");
@@ -91,17 +93,14 @@ const CrearActividad = () => {
 
     const payload = { titulo, descripcion, alumno, fecha };
 
-    
     const result = await trySendNow(payload);
 
     if (result.ok) {
       setMsg("Actividad creada y guardada en el servidor ✔");
-    
       setTimeout(() => navigate("/dashboard", { replace: true }), 900);
       return;
     }
 
-    
     const pending = {
       payload,
       createdAt: new Date().toISOString(),
@@ -110,13 +109,14 @@ const CrearActividad = () => {
     try {
       const id = await addPendingActivity(pending);
       console.log("[handleSubmit] guardado en IDB id:", id);
+
       if ("serviceWorker" in navigator && "SyncManager" in window) {
         try {
           const reg = await navigator.serviceWorker.ready;
           await reg.sync.register("sync-actividades");
           setMsg("Sin conexión — actividad guardada en cola. Se enviará cuando haya Internet.");
         } catch (err) {
-          console.warn("No se pudo registrar sync, queda en cola:", err);
+          console.warn("No se pudo registrar sync:", err);
           setMsg("Actividad guardada en cola local (no hay Background Sync).");
         }
       } else {
@@ -127,7 +127,6 @@ const CrearActividad = () => {
       setMsg("Error guardando localmente. Intenta de nuevo.");
     }
 
-    // limpiar form
     setTitulo("");
     setDescripcion("");
     setAlumno("");
@@ -169,7 +168,7 @@ const CrearActividad = () => {
 
         <div style={styles.pendingBox}>
           <h4>Actividades en cola (pendientes)</h4>
-          <PendingList onFlush={flushPending} /> 
+          <PendingList onFlush={flushPending} />
         </div>
       </div>
     </div>
@@ -180,6 +179,7 @@ const CrearActividad = () => {
 const PendingList = ({ onFlush }) => {
   const [list, setList] = React.useState([]);
   const mountedRef = React.useRef(true);
+
   const safeItem = (it) => {
     if (!it || typeof it !== "object") return { id: null, payload: {}, createdAt: null };
     return {
@@ -200,7 +200,7 @@ const PendingList = ({ onFlush }) => {
         const normalized = Array.isArray(items) ? items.map(safeItem) : [];
         setList(normalized);
       } catch (err) {
-        console.error("Error leyendo pendientes desde IDB:", err);
+        console.error("Error leyendo pendientes:", err);
         setList([]);
       }
     };
@@ -224,13 +224,15 @@ const PendingList = ({ onFlush }) => {
       <ul>
         {list.map((it) => {
           const item = safeItem(it);
-          const title = item.payload?.titulo ?? item.payload?.title ?? "Sin título";
+          const title = item.payload?.titulo ?? "Sin título";
           let dateStr = "";
+
           try {
             dateStr = item.createdAt ? new Date(item.createdAt).toLocaleString() : "";
           } catch {
             dateStr = "";
           }
+
           return (
             <li key={item.id ?? Math.random()} style={{ color: "#cbd5f5", marginBottom: 6 }}>
               {title} {dateStr ? " — " + dateStr : ""}
@@ -245,6 +247,7 @@ const PendingList = ({ onFlush }) => {
   );
 };
 
+
 const styles = {
   wrapper: { minHeight: "100vh", padding: 20, background: "linear-gradient(#022, #000)" },
   container: { maxWidth: 800, margin: "0 auto", color: "#e5e7eb" },
@@ -258,4 +261,3 @@ const styles = {
 };
 
 export default CrearActividad;
-
